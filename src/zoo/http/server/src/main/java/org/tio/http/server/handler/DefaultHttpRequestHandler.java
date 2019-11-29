@@ -257,7 +257,6 @@ import org.tio.utils.hutool.FileUtil;
 import org.tio.utils.hutool.StrUtil;
 import org.tio.utils.hutool.Validator;
 import org.tio.utils.lock.LockUtils;
-import org.tio.utils.lock.ReadWriteLockHandler;
 
 import com.esotericsoftware.reflectasm.MethodAccess;
 
@@ -312,18 +311,19 @@ public class DefaultHttpRequestHandler implements HttpRequestHandler {
 	private static MethodAccess getMethodAccess(Class<?> clazz) throws Exception {
 		MethodAccess ret = CLASS_METHODACCESS_MAP.get(clazz);
 		if (ret == null) {
-			LockUtils.runReadOrWrite("_tio_http_h_ma_" + clazz.getName(), clazz, new ReadWriteLockHandler() {
-				@Override
-				public Object read() {
-					return null;
-				}
+			LockUtils.runWriteOrWaitRead("_tio_http_h_ma_" + clazz.getName(), clazz, () -> {
+//				@Override
+//				public void read() {
+//				}
 
-				@Override
-				public Object write() {
-					MethodAccess ret = MethodAccess.get(clazz);
-					CLASS_METHODACCESS_MAP.put(clazz, ret);
-					return ret;
-				}
+//				@Override
+//				public void write() {
+//					MethodAccess ret = CLASS_METHODACCESS_MAP.get(clazz);
+					if (CLASS_METHODACCESS_MAP.get(clazz) == null) {
+//						ret = MethodAccess.get(clazz);
+						CLASS_METHODACCESS_MAP.put(clazz, MethodAccess.get(clazz));
+					}
+//				}
 			});
 			ret = CLASS_METHODACCESS_MAP.get(clazz);
 		}
@@ -822,7 +822,7 @@ public class DefaultHttpRequestHandler implements HttpRequestHandler {
 													String retStr = FreemarkerUtils.generateStringByPath(template, configuration, model);
 													response = Resps.bytes(request, retStr.getBytes(configuration.getDefaultEncoding()), extension);
 													return response;
-												} catch (Exception e) {
+												} catch (Throwable e) {
 													log.error("freemarker错误，当成普通文本处理：" + file.getCanonicalPath() + ", " + e.toString());
 												}
 											}

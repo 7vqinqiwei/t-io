@@ -191,236 +191,163 @@
 	   See the License for the specific language governing permissions and
 	   limitations under the License.
 */
-package org.tio.core.stat;
+package org.tio.core;
 
-import java.util.Date;
-import java.util.concurrent.atomic.AtomicInteger;
-import java.util.concurrent.atomic.AtomicLong;
+import java.nio.ByteBuffer;
+import java.nio.channels.CompletionHandler;
+import java.util.List;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.tio.core.ChannelContext.CloseCode;
+import org.tio.core.WriteCompletionHandler.WriteCompletionVo;
+import org.tio.core.intf.Packet;
+import org.tio.core.intf.Packet.Meta;
+import org.tio.core.stat.IpStat;
 import org.tio.utils.SystemTimer;
-import org.tio.utils.hutool.BetweenFormater;
-import org.tio.utils.hutool.BetweenFormater.Level;
+import org.tio.utils.hutool.CollUtil;
 
 /**
- * 这个是给服务器用的，主要用于监控IP情况，随时拉黑恶意攻击IP
+ *
  * @author tanyaowu
- * 2017年8月20日 下午8:02:41
+ *
  */
-public class IpStat implements java.io.Serializable {
-	private static final long	serialVersionUID	= -6942731710053482089L;
-	private Date				start				= new Date();
-	/**
-	 * 当前统计了多久，单位：毫秒
-	 */
-	private long				duration;
-	/**
-	 * 时长类型，单位：秒，譬如60，3600等
-	 */
-	private Long				durationType;
-	/**
-	 * 客户端ip
-	 */
-	private String				ip;
+public class WriteCompletionHandler implements CompletionHandler<Integer, WriteCompletionVo> {
+	private static Logger		log				= LoggerFactory.getLogger(WriteCompletionHandler.class);
+	private ChannelContext		channelContext	= null;
+	//	public final ReentrantLock	lock			= new ReentrantLock();
+	//	public final Condition		condition		= lock.newCondition();
 
-	/**
-	 * 解码异常的次数
-	 */
-	private AtomicInteger	decodeErrorCount	= new AtomicInteger();
-	/**
-	 * 收到该IP连接请求的次数
-	 */
-	private AtomicInteger	requestCount		= new AtomicInteger();
-	/**
-	 * 本IP已发送的字节数
-	 */
-	private AtomicLong		sentBytes			= new AtomicLong();
-	/**
-	 * 本IP已发送的packet数
-	 */
-	private AtomicLong		sentPackets			= new AtomicLong();
-	/**
-	 * 本IP已处理的字节数
-	 */
-	private AtomicLong		handledBytes		= new AtomicLong();
-	/**
-	 * 本IP已处理的packet数
-	 */
-	private AtomicLong		handledPackets		= new AtomicLong();
-	/**
-	 * 处理消息包耗时，单位：毫秒
-	 */
-	private AtomicLong		handledPacketCosts	= new AtomicLong();
-	/**
-	 * 本IP已接收的字节数
-	 */
-	private AtomicLong		receivedBytes		= new AtomicLong();
-	/**
-	 * 本IP已接收了多少次TCP数据包
-	 */
-	private AtomicLong		receivedTcps		= new AtomicLong();
-	/**
-	 * 本IP已接收的packet数
-	 */
-	private AtomicLong		receivedPackets		= new AtomicLong();
+	public static class WriteCompletionVo {
+		private ByteBuffer byteBuffer = null;
 
-	/**
-	 * 平均每次TCP接收到的字节数，这个可以用来监控慢攻击，配置PacketsPerTcpReceive定位慢攻击
-	 */
-	public double getBytesPerTcpReceive() {
-		if (receivedTcps.get() == 0) {
-			return 0;
+		private Object obj = null;
+
+		/**
+		 * @param byteBuffer
+		 * @param obj
+		 * @author tanyaowu
+		 */
+		public WriteCompletionVo(ByteBuffer byteBuffer, Object obj) {
+			super();
+			this.byteBuffer = byteBuffer; //[pos=0 lim=212 cap=212]
+			this.obj = obj;
 		}
-		double ret = (double) receivedBytes.get() / (double) receivedTcps.get();
-		return ret;
 	}
 
-	/**
-	 * @return the decodeErrorCount
-	 */
-	public AtomicInteger getDecodeErrorCount() {
-		return decodeErrorCount;
+	public WriteCompletionHandler(ChannelContext channelContext) {
+		this.channelContext = channelContext;
 	}
 
-	public long getDuration() {
-		duration = SystemTimer.currTime - this.start.getTime();
-		return duration;
-	}
-
-	public IpStat(String ip, Long durationType) {
-		this.ip = ip;
-		this.durationType = durationType;
-	}
-
-	/**
-	 * @return the durationType
-	 */
-	public Long getDurationType() {
-		return durationType;
-	}
-
-	/**
-	 * @return the duration
-	 */
-	public String getFormatedDuration() {
-		duration = SystemTimer.currTime - this.start.getTime();
-		BetweenFormater betweenFormater = new BetweenFormater(duration, Level.MILLSECOND);
-		return betweenFormater.format();
-	}
-
-	/**
-	 * @return the countHandledByte
-	 */
-	public AtomicLong getHandledBytes() {
-		return handledBytes;
-	}
-
-	/**
-	 * @return the countHandledPacket
-	 */
-	public AtomicLong getHandledPackets() {
-		return handledPackets;
-	}
-
-	/**
-	 * @return the ip
-	 */
-	public String getIp() {
-		return ip;
-	}
-
-	/**
-	 * 平均每次TCP接收到的业务包数，这个可以用来监控慢攻击，此值越小越有攻击嫌疑
-	 */
-	public double getPacketsPerTcpReceive() {
-		if (receivedTcps.get() == 0) {
-			return 0;
+	@Override
+	public void completed(Integer bytesWritten, WriteCompletionVo writeCompletionVo) {
+		//		Object attachment = writeCompletionVo.getObj();
+		if (bytesWritten > 0) {
+			channelContext.stat.latestTimeOfSentByte = SystemTimer.currTime;
 		}
-		double ret = (double) receivedPackets.get() / (double) receivedTcps.get();
-		return ret;
-	}
-
-	/**
-	 * @return the countReceivedByte
-	 */
-	public AtomicLong getReceivedBytes() {
-		return receivedBytes;
-	}
-
-	/**
-	 * @return the countReceivedPacket
-	 */
-	public AtomicLong getReceivedPackets() {
-		return receivedPackets;
-	}
-
-	/**
-	 * @return the receivedTcps
-	 */
-	public AtomicLong getReceivedTcps() {
-		return receivedTcps;
-	}
-
-	/**
-	 * @return the requestCount
-	 */
-	public AtomicInteger getRequestCount() {
-		return requestCount;
-	}
-
-	/**
-	 * @return the countSentByte
-	 */
-	public AtomicLong getSentBytes() {
-		return sentBytes;
-	}
-
-	/**
-	 * @return the countSentPacket
-	 */
-	public AtomicLong getSentPackets() {
-		return sentPackets;
-	}
-
-	/**
-	 * @return the start
-	 */
-	public Date getStart() {
-		return start;
-	}
-
-	/**
-	 * @param durationType the durationType to set
-	 */
-	public void setDurationType(Long durationType) {
-		this.durationType = durationType;
-	}
-
-	/**
-	 * @param ip the ip to set
-	 */
-	public void setIp(String ip) {
-		this.ip = ip;
-	}
-
-	/**
-	 * @param start the start to set
-	 */
-	public void setStart(Date start) {
-		this.start = start;
-	}
-
-	public AtomicLong getHandledPacketCosts() {
-		return handledPacketCosts;
-	}
-
-	/**
-	 * 处理packet平均耗时，单位：毫秒
-	 * @return
-	 */
-	public double getHandledCostsPerPacket() {
-		if (handledPackets.get() > 0) {
-			return handledPacketCosts.get() / handledPackets.get();
+		if (writeCompletionVo.byteBuffer.hasRemaining()) {
+			if (log.isInfoEnabled()) {
+				log.info("{} {}/{} has sent", channelContext, writeCompletionVo.byteBuffer.position(), writeCompletionVo.byteBuffer.limit());
+			}
+			channelContext.asynchronousSocketChannel.write(writeCompletionVo.byteBuffer, writeCompletionVo, this);
+		} else {
+			handle(bytesWritten, null, writeCompletionVo);
 		}
-		return 0;
 	}
+
+	@Override
+	public void failed(Throwable throwable, WriteCompletionVo writeCompletionVo) {
+		//		Object attachment = writeCompletionVo.getObj();
+		handle(0, throwable, writeCompletionVo);
+	}
+
+	/**
+	 * 
+	 * @param bytesWritten
+	 * @param throwable
+	 * @param writeCompletionVo
+	 * @author tanyaowu
+	 */
+	public void handle(Integer bytesWritten, Throwable throwable, WriteCompletionVo writeCompletionVo) {
+		//		ReentrantLock lock = channelContext.writeCompletionHandler.lock;
+		//		lock.lock();
+		try {
+			channelContext.sendRunnable.writeQueue.take();//.poll().take();
+			channelContext.sendRunnable.canSend = true;
+			//			channelContext.writeCompletionHandler.condition.signal();
+			channelContext.stat.latestTimeOfSentPacket = SystemTimer.currTime;
+			Object attachment = writeCompletionVo.obj;//();
+			TioConfig tioConfig = channelContext.tioConfig;
+			boolean isSentSuccess = bytesWritten > 0;
+
+			if (isSentSuccess) {
+				if (tioConfig.statOn) {
+					tioConfig.groupStat.sentBytes.addAndGet(bytesWritten);
+					channelContext.stat.sentBytes.addAndGet(bytesWritten);
+				}
+
+				if (CollUtil.isNotEmpty(tioConfig.ipStats.durationList)) {
+					for (Long v : tioConfig.ipStats.durationList) {
+						IpStat ipStat = (IpStat) channelContext.tioConfig.ipStats.get(v, channelContext);
+						ipStat.getSentBytes().addAndGet(bytesWritten);
+					}
+				}
+			}
+
+			try {
+				boolean isPacket = attachment instanceof Packet;
+				if (isPacket) {
+					if (isSentSuccess) {
+						if (CollUtil.isNotEmpty(tioConfig.ipStats.durationList)) {
+							for (Long v : tioConfig.ipStats.durationList) {
+								IpStat ipStat = (IpStat) channelContext.tioConfig.ipStats.get(v, channelContext);
+								ipStat.getSentPackets().incrementAndGet();
+							}
+						}
+					}
+					handleOne(bytesWritten, throwable, (Packet) attachment, isSentSuccess);
+				} else {
+					List<?> ps = (List<?>) attachment;
+					for (Object obj : ps) {
+						handleOne(bytesWritten, throwable, (Packet) obj, isSentSuccess);
+					}
+				}
+
+				if (!isSentSuccess) {
+					Tio.close(channelContext, throwable, "写数据返回:" + bytesWritten, CloseCode.WRITE_COUNT_IS_NEGATIVE);
+				}
+			} catch (Throwable e) {
+				log.error(e.toString(), e);
+			}
+
+		} catch (Throwable e) {
+			log.error(e.toString(), e);
+		} finally {
+			//			lock.unlock();
+		}
+
+	}
+
+	/**
+	 * 
+	 * @param result
+	 * @param throwable
+	 * @param packet
+	 * @param isSentSuccess
+	 * @author tanyaowu
+	 */
+	public void handleOne(Integer result, Throwable throwable, Packet packet, Boolean isSentSuccess) {
+		Meta meta = packet.getMeta();
+		if (meta != null) {
+			meta.setIsSentSuccess(isSentSuccess);
+		}
+
+		try {
+			channelContext.processAfterSent(packet, isSentSuccess);
+		} catch (Throwable e) {
+			log.error(e.toString(), e);
+		}
+
+	}
+
 }
